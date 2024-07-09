@@ -31,7 +31,7 @@
 #include <string.h>
 #include <termios.h>
 #include <errno.h>
-#include <mysql/mysql.h>
+#include <mariadb/mysql.h>
 #include <syslog.h>
 #include <errno.h>
 #include <linux/rtc.h>
@@ -40,17 +40,17 @@
 #define MAX_DISK_USAGE 80
 #define MAX_OBD_SIZE 100
 
-//Global variables
+ //Global variables
 static volatile sig_atomic_t ffmpegPid = 0, recMgr = 0, obdLogger = 0, recRstrtFlag = 1, loggingOBD = 1, obdReset = 0;
 
 //Function definitions
 int compareLLong(const void* a, const void* b);
 float calcDiskUsage();
 void rapCleanup();
-int set_interface_attribs (int fd, int speed);
+int set_interface_attribs(int fd, int speed);
 void removechars(char* str, char c);
-void obdCmd(int fd, char *cmd, char *resp);
-int *getCodes(char *obdCode);
+void obdCmd(int fd, char* cmd, char* resp);
+int* getCodes(char* obdCode);
 
 //Event handlers
 static void recIntHandler(int signum __attribute__((unused)));
@@ -58,7 +58,7 @@ static void mainSigHandler(int signum __attribute__((unused)));
 static void obdIntHandler(int signum __attribute__((unused)));
 static void forwardToOBDLogger(int signum __attribute__((unused)));
 static void fullObdDump(int signum __attribute__((unused)));
-static void recChldHandler(int, siginfo_t *, void *);
+static void recChldHandler(int, siginfo_t*, void*);
 
 //Main Function
 int main()
@@ -75,15 +75,15 @@ int main()
 
 	//Synchronize time with RTC
 	failCount = 0;
-	while(failCount < 10)
+	while (failCount < 10)
 	{
 		rtc = open("/dev/rtc", O_RDONLY);
-		if(rtc == -1)
+		if (rtc == -1)
 		{
 			failCount++;
 			continue;
 		}
-		if(ioctl(rtc, RTC_RD_TIME, &rtcTime) == -1)
+		if (ioctl(rtc, RTC_RD_TIME, &rtcTime) == -1)
 		{
 			close(rtc);
 			failCount++;
@@ -98,35 +98,39 @@ int main()
 			break;
 		}
 	}
-	if(failCount == 10) syslog(LOG_WARNING, "Error: Could not synchronize with RTC. Continuing anyway\n");
+	if (failCount == 10) syslog(LOG_WARNING, "Error: Could not synchronize with RTC. Continuing anyway\n");
 
 	//**********************************************
 	//Recording manager and associated child threads
 	//**********************************************
 	recMgr = (sig_atomic_t)fork();
-	if(recMgr == 0)
+	if (recMgr == 0)
 	{
 		int i, strLength, firstRun = 1;
 		unsigned int startTime;
-		char *fileStr;
+		char* fileStr;
 		SigAction recIntAction, chldHandler;
 
 		//Check if webcam exists
 		failCount = 0;
-		while(access("/dev/video0", F_OK) == -1 && failCount < 60)
+		while (access("/dev/video0", F_OK) == -1 && failCount < 60)
 		{
 			sleep(1);
 			failCount++;
 		}
-		if(failCount == 60)
+		if (failCount == 60)
 		{
 			syslog(LOG_ERR, "Error: No webcam found!\n");
 			exit(1);
 		}
 
 		//Set UVC options for my webcam (MOST LIKELY WEBCAM SPECIFIC)
-		system("uvcdynctrl -s 'Exposure, Auto' -- 3");
-		system("uvcdynctrl -s 'Exposure, Auto Priority' -- 1");
+
+		/*
+		Disabilito perchè sembra mandare in crisi tutto...
+		*/
+		//system("uvcdynctrl -s 'Exposure, Auto' -- 3");
+		//system("uvcdynctrl -s 'Exposure, Auto Priority' -- 1"); non sembra esistere sulla mia...
 
 		//When killed, kill ffmpeg
 		sigfillset(&recIntAction.sa_mask);
@@ -140,12 +144,12 @@ int main()
 		sigaction(SIGCHLD, &chldHandler, 0);
 
 		//The eternal (until interrupted) recording loop
-		while(1)
+		while (1)
 		{
 			recRstrtFlag = 1;
 			ffmpegPid = (sig_atomic_t)fork();
 
-			if(ffmpegPid == 0)
+			if (ffmpegPid == 0)
 			{
 				//Redirect output of ffmpeg to the bit bucket
 				int fd = open("/dev/null", O_WRONLY);
@@ -160,14 +164,16 @@ int main()
 				fileStr = malloc(strLength);
 				snprintf(fileStr, strLength, "/var/www/html/vids/%ld%03ld.mp4", tv.tv_sec, tv.tv_usec / 1000);
 
-				execl("/usr/local/bin/ffmpeg", "ffmpeg", "-y", "-i", "/dev/video0", "-c:v", "h264_omx", "-b:v", "5M", fileStr, (char *)NULL);
+				//maybe too specific for my use case...
+				execl("/usr/bin/ffmpeg", "ffmpeg", "-y", "-f", "video4linux2", "-s", "1280x720", "-i", "/dev/video0", "-thread_queue_size", "512", "-f", "alsa", "-ac", "1", "-i", "plughw:1,0", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-profile:v", "baseline", "-level", "3.0", "-pix_fmt", "yuv420p", "-b:v", "2M", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", fileStr, (char*)NULL);
+				perror("execl"); // If execl returns, an error occurred
 			}
 
 			//Let ffmpeg run for RECORDING_DURATION. Also do cache maintainence
-			for(i = 0; i <= RECORDING_DURATION && recRstrtFlag; i++)
+			for (i = 0; i <= RECORDING_DURATION && recRstrtFlag; i++)
 			{
-				if(firstRun) firstRun = 0;
-				else if(i == 0)
+				if (firstRun) firstRun = 0;
+				else if (i == 0)
 				{
 					startTime = time(NULL);
 					rapCleanup(); //This will kill obdLogger if it takes longer than 5 minutes to start. Probably a good thing
@@ -178,7 +184,7 @@ int main()
 
 			//Done recording, kill (and/or) wait for ffmpeg to close
 			waitRslt = waitpid((pid_t)ffmpegPid, NULL, WNOHANG);
-			if(waitRslt == 0)
+			if (waitRslt == 0)
 			{
 				kill((pid_t)ffmpegPid, SIGINT);
 				waitpid((pid_t)ffmpegPid, NULL, 0);
@@ -193,26 +199,26 @@ int main()
 	//OBD Logger
 	//**********
 	obdLogger = (sig_atomic_t)fork();
-	if(obdLogger == 0)
+	if (obdLogger == 0)
 	{
-		unsigned long *resultLen;
-		char *query, *obdAddr, obdResp[MAX_OBD_SIZE], lastResp[0xE1][MAX_OBD_SIZE], *obdCmdBuf, jsonCodes[452]; //225 Codes * 2 characters each + 1 (start bracket) + 1 (null terminator)
-		const char *portname = "/dev/rfcomm0";
-		int i, fd, cmdLength, offset, newCode = 0, *codeBatch, availableCodes[0xE1], supportedCodes[0xE1], checkCodes[0xE1];
+		unsigned long* resultLen;
+		char* query, * obdAddr, obdResp[MAX_OBD_SIZE], lastResp[0xE1][MAX_OBD_SIZE], * obdCmdBuf, jsonCodes[452]; //225 Codes * 2 characters each + 1 (start bracket) + 1 (null terminator)
+		const char* portname = "/dev/rfcomm0";
+		int i, fd, cmdLength, offset, newCode = 0, * codeBatch, availableCodes[0xE1], supportedCodes[0xE1], checkCodes[0xE1];
 		MYSQL mysql;
-		MYSQL_RES *queryResult;
+		MYSQL_RES* queryResult;
 		MYSQL_ROW resultRow;
 		struct timeval tv;
 
 		mysql_library_init(0, NULL, NULL);
 		mysql_init(&mysql);
 		failCount = 0;
-		while(!mysql_real_connect(&mysql, NULL, "roadapplepi", "roadapplepi", "roadapplepi", 0, NULL, 0) && failCount < 60)
+		while (!mysql_real_connect(&mysql, NULL, "roadapplepi", "roadapplepi", "roadapplepi", 0, NULL, 0) && failCount < 60)
 		{
 			sleep(1);
 			failCount++;
 		}
-		if(failCount == 60)
+		if (failCount == 60)
 		{
 			syslog(LOG_ERR, "Error: Could not connect to MySQL Server\n");
 			exit(1);
@@ -221,7 +227,7 @@ int main()
 		//Get OBD Bluetooth MAC Address
 		mysql_query(&mysql, "SELECT value FROM env WHERE name='currentOBD'");
 		queryResult = mysql_store_result(&mysql);
-		if((resultRow = mysql_fetch_row(queryResult)))
+		if ((resultRow = mysql_fetch_row(queryResult)))
 		{
 			resultLen = mysql_fetch_lengths(queryResult);
 			obdAddr = malloc(resultLen[0]);
@@ -242,7 +248,7 @@ int main()
 		snprintf(query, cmdLength, "rfcomm bind 0 %s", obdAddr);
 		system(query);
 		free(query);
-		if(access(portname, F_OK) == -1)
+		if (access(portname, F_OK) == -1)
 		{
 			syslog(LOG_ERR, "Error: Could not open COM port for OBD!\n");
 			mysql_close(&mysql);
@@ -251,16 +257,16 @@ int main()
 		}
 
 		//Initialize serial connection
-		fd = open (portname, O_RDWR | O_NOCTTY | O_NDELAY);
+		fd = open(portname, O_RDWR | O_NOCTTY | O_NDELAY);
 		if (fd < 0)
 		{
-			syslog(LOG_ERR, "error %d opening %s: %s\n", errno, portname, strerror (errno));
+			syslog(LOG_ERR, "error %d opening %s: %s\n", errno, portname, strerror(errno));
 			system("rfcomm release 0");
 			mysql_close(&mysql);
 			mysql_library_end();
 			return -1;
 		}
-		if(set_interface_attribs (fd, B38400) != 0)
+		if (set_interface_attribs(fd, B38400) != 0)
 		{
 			syslog(LOG_ERR, "There was an error setting up %s\n", portname);
 			system("rfcomm release 0");
@@ -275,7 +281,7 @@ int main()
 		//Get Available codes
 		memset(availableCodes, 0, sizeof(availableCodes));
 		availableCodes[0x0] = 1;
-		for(offset = 0x0; offset < 0xE0; offset += 0x20) if(availableCodes[offset])
+		for (offset = 0x0; offset < 0xE0; offset += 0x20) if (availableCodes[offset])
 		{
 			cmdLength = snprintf(NULL, 0, "01%02X1", offset) + 1;
 			obdCmdBuf = malloc(cmdLength);
@@ -286,7 +292,7 @@ int main()
 			codeBatch = getCodes(obdResp);
 			memset(obdResp, 0, sizeof(obdResp));
 
-			for(i = 1; i < 0x21; i++) availableCodes[i + offset] = codeBatch[i];
+			for (i = 1; i < 0x21; i++) availableCodes[i + offset] = codeBatch[i];
 		}
 
 		//Set OBD codes that this program currently supports	
@@ -307,13 +313,13 @@ int main()
 		//AND the program-supported and car-supported codes together and disable every 20th code
 		//Build JSON
 		//Initialize lastResp
-		strcpy (jsonCodes, "[");
-		for(i = 0; i < 0xE1; i++)
+		strcpy(jsonCodes, "[");
+		for (i = 0; i < 0xE1; i++)
 		{
 			checkCodes[i] = availableCodes[i] && supportedCodes[i];
-			if(i % 20 == 0) checkCodes[i] = 0;
+			if (i % 20 == 0) checkCodes[i] = 0;
 			sprintf(jsonCodes + strlen(jsonCodes), "%d,", checkCodes[i]);
-			
+
 			strcpy(lastResp[i], "\0");
 		}
 
@@ -330,7 +336,7 @@ int main()
 		sigfillset(&action.sa_mask);
 		action.sa_handler = obdIntHandler;
 		sigaction(SIGINT, &action, 0);
-		
+
 		//When I receive SIGUSR1, save all values again
 		sigfillset(&resetOBD.sa_mask);
 		resetOBD.sa_handler = fullObdDump;
@@ -338,14 +344,14 @@ int main()
 		sigaction(SIGUSR1, &resetOBD, 0);
 
 		//Infinite (Until Interrupted) loop
-		while(loggingOBD)
+		while (loggingOBD)
 		{
 			//Initialize MySQL query	
 			query = malloc(56);
 			strcpy(query, "INSERT INTO obdLog (timestamp, mode, pid, value) VALUES");
-		
+
 			//Interpret Codes
-			for(i = 0; i < 0xE1 && loggingOBD && !obdReset; i++) if(checkCodes[i])
+			for (i = 0; i < 0xE1 && loggingOBD && !obdReset; i++) if (checkCodes[i])
 			{
 				//Run available and implemented OBD codes
 				cmdLength = snprintf(NULL, 0, "01%02X1", i) + 1;
@@ -355,52 +361,52 @@ int main()
 				free(obdCmdBuf);
 
 				//Parse codes if new
-				if(strcmp(lastResp[i], obdResp) != 0)
+				if (strcmp(lastResp[i], obdResp) != 0)
 				{
 					strcpy(lastResp[i], obdResp);
 					gettimeofday(&tv, NULL);
 					offset = strlen(query);
 					newCode = 1;
-					
-					switch(i)
+
+					switch (i)
 					{
 						//Calculated Engine Load and throttle position
-						case 0x04: case 0x11:
+					case 0x04: case 0x11:
 						cmdLength = snprintf(NULL, 0, " (%ld%03ld, 1, %d, \"%d\"),", tv.tv_sec, tv.tv_usec / 1000, i, (int)(strtol(obdResp + 4, NULL, 16) / 2.55)) + 1;
 						query = realloc(query, offset + cmdLength);
 						snprintf(query + offset, cmdLength, " (%ld%03ld, 1, %d, \"%d\"),", tv.tv_sec, tv.tv_usec / 1000, i, (int)(strtol(obdResp + 4, NULL, 16) / 2.55));
 						break;
 
 						//Coolant Temperature and Air Intake Temperature
-						case 0x05: case 0x0F:
+					case 0x05: case 0x0F:
 						cmdLength = snprintf(NULL, 0, " (%ld%03ld, 1, %d, \"%d\"),", tv.tv_sec, tv.tv_usec / 1000, i, (int)strtol(obdResp + 4, NULL, 16) - 40) + 1;
 						query = realloc(query, offset + cmdLength);
 						snprintf(query + offset, cmdLength, " (%ld%03ld, 1, %d, \"%d\"),", tv.tv_sec, tv.tv_usec / 1000, i, (int)strtol(obdResp + 4, NULL, 16) - 40);
 						break;
 
 						//Fuel Trims
-						case 0x06 ... 0x09:
+					case 0x06 ... 0x09:
 						cmdLength = snprintf(NULL, 0, " (%ld%03ld, 1, %d, \"%d\"),", tv.tv_sec, tv.tv_usec / 1000, i, (int)(strtol(obdResp + 4, NULL, 16) / 1.28) - 100) + 1;
 						query = realloc(query, offset + cmdLength);
 						snprintf(query + offset, cmdLength, " (%ld%03ld, 1, %d, \"%d\"),", tv.tv_sec, tv.tv_usec / 1000, i, (int)(strtol(obdResp + 4, NULL, 16) / 1.28) - 100);
 						break;
 
 						//Intake manifold absolute pressure and speed
-						case 0x0B: case 0x0D:
+					case 0x0B: case 0x0D:
 						cmdLength = snprintf(NULL, 0, " (%ld%03ld, 1, %d, \"%d\"),", tv.tv_sec, tv.tv_usec / 1000, i, (int)strtol(obdResp + 4, NULL, 16)) + 1;
 						query = realloc(query, offset + cmdLength);
 						snprintf(query + offset, cmdLength, " (%ld%03ld, 1, %d, \"%d\"),", tv.tv_sec, tv.tv_usec / 1000, i, (int)strtol(obdResp + 4, NULL, 16));
 						break;
 
 						//Engine RPM
-						case 0x0C:
+					case 0x0C:
 						cmdLength = snprintf(NULL, 0, " (%ld%03ld, 1, %d, \"%d\"),", tv.tv_sec, tv.tv_usec / 1000, i, (int)(strtol(obdResp + 4, NULL, 16) / 4)) + 1;
 						query = realloc(query, offset + cmdLength);
 						snprintf(query + offset, cmdLength, " (%ld%03ld, 1, %d, \"%d\"),", tv.tv_sec, tv.tv_usec / 1000, i, (int)(strtol(obdResp + 4, NULL, 16) / 4));
 						break;
 
 						//Timing advance
-						case 0x0E:
+					case 0x0E:
 						cmdLength = snprintf(NULL, 0, " (%ld%03ld, 1, %d, \"%d\"),", tv.tv_sec, tv.tv_usec / 1000, i, (int)(strtol(obdResp + 4, NULL, 16) / 2) - 64) + 1;
 						query = realloc(query, offset + cmdLength);
 						snprintf(query + offset, cmdLength, " (%ld%03ld, 1, %d, \"%d\"),", tv.tv_sec, tv.tv_usec / 1000, i, (int)(strtol(obdResp + 4, NULL, 16) / 2) - 64);
@@ -409,18 +415,18 @@ int main()
 				}
 				memset(obdResp, 0, sizeof(obdResp));
 			}
-			
+
 			//Store in MySQL and free memory
-			if(newCode)
+			if (newCode)
 			{
 				query[strlen(query) - 1] = ';';
 				mysql_query(&mysql, query);
 				newCode = 0;
 			}
 			free(query);
-			
+
 			//We've been told to do a fresh dump of OBD information, so clear lastResp array
-			if(obdReset)
+			if (obdReset)
 			{
 				memset(lastResp, 0, MAX_OBD_SIZE * 0xE1);
 				obdReset = 0;
@@ -446,15 +452,15 @@ int main()
 	sigaction(SIGUSR1, &resetOBD, 0);
 
 	//Run until all children terminate, ignoring unhandled signals
-	do {waitRslt = waitpid((pid_t)recMgr, NULL, 0);} while(waitRslt == -1 && errno == EINTR);
-	do {waitRslt = waitpid((pid_t)obdLogger, NULL, 0);} while(waitRslt == -1 && errno == EINTR);
+	do { waitRslt = waitpid((pid_t)recMgr, NULL, 0); } while (waitRslt == -1 && errno == EINTR);
+	do { waitRslt = waitpid((pid_t)obdLogger, NULL, 0); } while (waitRslt == -1 && errno == EINTR);
 	return 0;
 }
 
 //Sorting logic
 int compareLLong(const void* a, const void* b)
 {
-	if(*(long long*)a == *(long long*)b) return 0;
+	if (*(long long*)a == *(long long*)b) return 0;
 	return *(long long*)a < *(long long*)b ? -1 : 1;
 }
 
@@ -462,7 +468,7 @@ int compareLLong(const void* a, const void* b)
 float calcDiskUsage()
 {
 	struct statvfs stats;
-	if(statvfs("/", &stats) != 0) return 0; //If I can't get the cache size, say that 0% of the disk is used
+	if (statvfs("/", &stats) != 0) return 0; //If I can't get the cache size, say that 0% of the disk is used
 	return 100 - (((float)stats.f_bfree / (float)stats.f_blocks) * 100);
 }
 
@@ -471,23 +477,23 @@ void rapCleanup()
 {
 	int strLength, i = 0, vidCount = 0;
 	float diskUsage;
-	long long *vidArray = malloc(sizeof(long long));
-	DIR *vidDir;
-	struct dirent *entry;
-	char *dateStr, *builtStr;
+	long long* vidArray = malloc(sizeof(long long));
+	DIR* vidDir;
+	struct dirent* entry;
+	char* dateStr, * builtStr;
 	MYSQL mysql;
 
 	vidDir = opendir("/var/www/html/vids");
-	if(vidDir == NULL)
+	if (vidDir == NULL)
 	{
 		syslog(LOG_WARNING, "Error: Could not manage cache size. Continuing...\n");
 		return;
 	}
 
 	//Count Videos in cache and store them in array
-	while((entry = readdir(vidDir)) != NULL) if(entry->d_type == DT_REG)
+	while ((entry = readdir(vidDir)) != NULL) if (entry->d_type == DT_REG)
 	{
-		if(vidCount != 0) vidArray = realloc(vidArray, (vidCount + 1) * sizeof(long long));
+		if (vidCount != 0) vidArray = realloc(vidArray, (vidCount + 1) * sizeof(long long));
 
 		dateStr = strdup(entry->d_name);
 		vidArray[vidCount] = atoll(strtok(dateStr, "."));
@@ -500,7 +506,7 @@ void rapCleanup()
 	diskUsage = calcDiskUsage();
 
 	//Delete excess videos
-	for(i = 0; i < vidCount && diskUsage > MAX_DISK_USAGE; i++)
+	for (i = 0; i < vidCount && diskUsage > MAX_DISK_USAGE; i++)
 	{
 		strLength = snprintf(NULL, 0, "/var/www/html/vids/%lld.mp4", vidArray[i]);
 		builtStr = malloc(strLength + 1);
@@ -512,11 +518,11 @@ void rapCleanup()
 	}
 
 	//Manage MySQL database if we deleted videos
-	if(i != 0)
+	if (i != 0)
 	{
 		mysql_library_init(0, NULL, NULL);
 		mysql_init(&mysql);
-		if(mysql_real_connect(&mysql, NULL, "roadapplepi", "roadapplepi", "roadapplepi", 0, NULL, 0))
+		if (mysql_real_connect(&mysql, NULL, "roadapplepi", "roadapplepi", "roadapplepi", 0, NULL, 0))
 		{
 			strLength = snprintf(NULL, 0, "DELETE FROM obdLog WHERE timestamp<%lld", vidArray[i - 1]);
 			builtStr = malloc(strLength + 1);
@@ -546,12 +552,12 @@ void rapCleanup()
 //When the main thread recieves a sigint, kill the logger and recorder
 static void mainSigHandler(int signum __attribute__((unused)))
 {
-	if(recMgr != 0)
+	if (recMgr != 0)
 	{
 		kill((pid_t)recMgr, SIGINT);
 		waitpid((pid_t)recMgr, NULL, 0);
 	}
-	if(obdLogger != 0)
+	if (obdLogger != 0)
 	{
 		kill((pid_t)obdLogger, SIGINT);
 		waitpid((pid_t)obdLogger, NULL, 0);
@@ -568,7 +574,7 @@ static void obdIntHandler(int signum __attribute__((unused)))
 //WHen recorder recieves sigint, kill ffmpeg
 static void recIntHandler(int signum __attribute__((unused)))
 {
-	if(ffmpegPid != 0)
+	if (ffmpegPid != 0)
 	{
 		sleep(1); //In case ffmpeg already recieved a kill
 		kill((pid_t)ffmpegPid, SIGINT);
@@ -581,7 +587,7 @@ static void recIntHandler(int signum __attribute__((unused)))
 //Forward SIGUSR1 to obdLogger
 static void forwardToOBDLogger(int signum __attribute__((unused)))
 {
-	if(obdLogger != 0) kill((pid_t)obdLogger, SIGUSR1);
+	if (obdLogger != 0) kill((pid_t)obdLogger, SIGUSR1);
 }
 
 //Do a full dump of OBD information
@@ -591,13 +597,13 @@ static void fullObdDump(int signum __attribute__((unused)))
 }
 
 //When ffmpeg dies, restart it
-static void recChldHandler(int sig, siginfo_t *info, void *ucontext)
+static void recChldHandler(int sig, siginfo_t* info, void* ucontext)
 {
-	if(info->si_pid == (pid_t)ffmpegPid) recRstrtFlag = 0;
+	if (info->si_pid == (pid_t)ffmpegPid) recRstrtFlag = 0;
 }
 
 //Sets up serial connection
-int set_interface_attribs (int fd, int speed)
+int set_interface_attribs(int fd, int speed)
 {
 	int n = 0;
 	struct termios term;
@@ -634,7 +640,7 @@ int set_interface_attribs (int fd, int speed)
 	if ((n = tcsetattr(fd, TCSANOW, &term)) == -1)
 	{
 		syslog(LOG_ERR, "Error setting serial configuration\n");
-		return -1 ;
+		return -1;
 	}
 	return 0;
 }
@@ -642,8 +648,8 @@ int set_interface_attribs (int fd, int speed)
 //Strips all instances of c from str
 void removechars(char* str, char c)
 {
-	char *pr = str, *pw = str;
-	while(*pr)
+	char* pr = str, * pw = str;
+	while (*pr)
 	{
 		*pw = *pr++;
 		pw += (*pw != c);
@@ -652,33 +658,33 @@ void removechars(char* str, char c)
 }
 
 //Runs an OBD command
-void obdCmd(int fd, char *cmd, char *resp)
+void obdCmd(int fd, char* cmd, char* resp)
 {
-	char *cmdBuffer, buf[MAX_OBD_SIZE];
+	char* cmdBuffer, buf[MAX_OBD_SIZE];
 	int n, cmdLength, receivedBytes;
 
 	cmdLength = snprintf(NULL, 0, "%s\r", cmd) + 1;
 	cmdBuffer = malloc(cmdLength);
 	snprintf(cmdBuffer, cmdLength, "%s\r", cmd);
-	write (fd, cmdBuffer, cmdLength);
+	write(fd, cmdBuffer, cmdLength);
 
 	n = receivedBytes = 0;
 	memset(buf, 0, sizeof(buf));
 	do {
 		n = read(fd, buf + receivedBytes, MAX_OBD_SIZE - 1);
-		if(n > 0) receivedBytes += n;
-	} while(strstr(buf, ">") == NULL);
+		if (n > 0) receivedBytes += n;
+	} while (strstr(buf, ">") == NULL);
 
 	removechars(buf, '\r');
 	removechars(buf, '\n');
 	removechars(buf, ' ');
-	if(resp != NULL) strncpy(resp, buf + cmdLength - 2, strlen(buf) - cmdLength + 1);
+	if (resp != NULL) strncpy(resp, buf + cmdLength - 2, strlen(buf) - cmdLength + 1);
 
 	free(cmdBuffer);
 }
 
 //Decodes available codes. Should feed it the response of "01 00", "01 20", etc
-int *getCodes(char *obdCode)
+int* getCodes(char* obdCode)
 {
 	static int codeArray[0x21];
 	int i, j, k, holdHex;
@@ -686,14 +692,14 @@ int *getCodes(char *obdCode)
 
 	j = 4;
 	memset(codeArray, 0, sizeof(codeArray));
-	
-	for(i = 4; i < strlen(obdCode); i++)
+
+	for (i = 4; i < strlen(obdCode); i++)
 	{
 		snprintf(hexBuffer, 2, "%c", obdCode[i]);
 		holdHex = (int)strtol(hexBuffer, NULL, 16);
 
 		k = 0;
-		while(holdHex)
+		while (holdHex)
 		{
 			if (holdHex & 1) codeArray[j] = 1;
 			j--;

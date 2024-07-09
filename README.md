@@ -3,6 +3,8 @@ RoadApplePi is a simple to install system for your Raspberry Pi designed to reco
 
 Demonstration video: [https://www.youtube.com/watch?v=-G1HIgr2cvU](https://www.youtube.com/watch?v=-G1HIgr2cvU)
 
+This is a fork trying to port the project to Debian Bookwork. Maybe I'll also add some fiture in the future.
+
 ## Features
  - **Dashcam Recordings with car stats:** Whenever your RoadApplePi is powered on and connected to a webcam and Bluetooth OBD2 reader, it's recording every piece of information it can scrape up. Using hardware-accelerated video encoding, this results in smooth dashcam footage and an instrument cluster that shows exactly what you (and others around you) were doing at any given time.
  - **Real-time OBD (II) Information:** See what's going on under-the hood in real time with our "Dashboard" view
@@ -32,7 +34,7 @@ Updated for Buster
  2. From the command line, run:
 	```
 	sudo apt update && sudo apt install -y git
-	git clone https://github.com/JVital2013/RoadApplePi
+	git clone https://github.com/nu00/RoadApplePi
 	cd RoadApplePi
 	./setup.sh
 	sudo reboot
@@ -82,10 +84,6 @@ The following software has made RoadApplePi possible
  - JustGage ([http://justgage.com/](http://justgage.com/)). Licensed under the MIT License
  - localForage ([https://localforage.github.io/localForage/](https://localforage.github.io/localForage/)). Licensed under the Apache License
  - Open Sans ([https://fonts.google.com/specimen/Open+Sans](https://fonts.google.com/specimen/Open+Sans)). Licensed under the Apache License
-
-Special thanks to Zipcar for making the dream possible! I'd been playing with the idea for this project for quite some time, when on March 14, 2017, [Zipcar ran a competition to give away 314 Raspberry Pi Zero Ws](http://www.zipcar.com/piday). [I was a lucky winner with this idea](https://twitter.com/JVital2013/status/841522799109890052). Thanks to this stroke of luck, I've been able to share this fun project with you all.
-
-Also, extra special thanks to my wife, who put up with me shoving this project under her nose every time I made a tiny bit of progress.
 
 ## Donate
 If you really like this project and want to give back, donations are accepted!
